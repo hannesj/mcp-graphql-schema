@@ -7,6 +7,7 @@ import { Console } from "node:console";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
+import chokidar from "chokidar";
 
 globalThis.console = new Console(process.stderr);
 
@@ -33,27 +34,42 @@ Examples:
 
 const schemaArg = args[0];
 
-const loadSchema = async () => {
-  // Default to schema.graphqls if no argument provided
-  const schemaPath = resolve(schemaArg ?? "schema.graphqls");
+// Global state for schema and schema path
+let currentSchema;
+let currentSchemaPath;
 
+const loadSchema = async (schemaPath) => {
   let schemaContent;
   try {
     schemaContent = await readFile(schemaPath, { encoding: "utf-8" });
   } catch (_error) {
     console.error(`Error: Schema file not found at ${schemaPath}`);
-    console.error("Usage: node index.mjs [path/to/schema.graphqls]");
-    process.exit(1);
+    throw new Error(`Schema file not found: ${schemaPath}`);
   }
   try {
-    return buildSchema(schemaContent);
+    const schema = buildSchema(schemaContent);
+    console.error(`Schema loaded successfully from ${schemaPath}`);
+    return schema;
   } catch (error) {
     console.error(`Error loading schema: ${error.message}`);
+    throw error;
+  }
+};
+
+const initializeSchema = async () => {
+  // Default to schema.graphqls if no argument provided
+  currentSchemaPath = resolve(schemaArg ?? "schema.graphqls");
+
+  try {
+    currentSchema = await loadSchema(currentSchemaPath);
+    return currentSchema;
+  } catch (error) {
+    console.error("Usage: node index.mjs [path/to/schema.graphqls]");
     process.exit(1);
   }
 };
 
-const schema = await loadSchema();
+const schema = await initializeSchema();
 
 // Extract schema name from file path for server identification
 const schemaName = schemaArg ? schemaArg.split("/").pop().replace(".graphqls", "") : "schema";
@@ -64,51 +80,67 @@ const server = new McpServer({
   description: `Provides GraphQL schema information for ${schemaName}`,
 });
 
-const queryFields = schema.getQueryType()?.getFields();
+// Helper function to get current query fields
+const getCurrentQueryFields = () => currentSchema.getQueryType()?.getFields();
+
+// Helper function to get current mutation fields  
+const getCurrentMutationFields = () => currentSchema.getMutationType()?.getFields();
+
+// Helper function to get current subscription fields
+const getCurrentSubscriptionFields = () => currentSchema.getSubscriptionType()?.getFields();
+
+const queryFields = getCurrentQueryFields();
 
 if (queryFields) {
   server.tool(
     "list-query-fields",
     "Lists all of the available root-level fields for a GraphQL query.",
-    () => ({
-      content: [
-        {
-          type: "text",
-          text: Object.keys(queryFields).join(", "),
-        },
-      ],
-    }),
+    () => {
+      const fields = getCurrentQueryFields();
+      return {
+        content: [
+          {
+            type: "text",
+            text: fields ? Object.keys(fields).join(", ") : "No query fields available",
+          },
+        ],
+      };
+    },
   );
 
   server.tool(
     "get-query-field",
     "Gets a single GraphQL query field definition in GraphQL Schema Definition Language.",
     { fieldName: z.string() },
-    ({ fieldName }) => ({
-      content: [
-        {
-          type: "text",
-          text: queryFields[fieldName]?.astNode
-            ? print(queryFields[fieldName].astNode)
-            : "Field not found or has no definition",
-        },
-      ],
-    }),
+    ({ fieldName }) => {
+      const fields = getCurrentQueryFields();
+      return {
+        content: [
+          {
+            type: "text",
+            text: fields?.[fieldName]?.astNode
+              ? print(fields[fieldName].astNode)
+              : "Field not found or has no definition",
+          },
+        ],
+      };
+    },
   );
 }
 
-const mutationFields = schema.getMutationType()?.getFields();
+const mutationFields = getCurrentMutationFields();
 
 if (mutationFields) {
   server.tool(
     "list-mutation-fields",
     "Lists all of the available root-level fields for a GraphQL mutation.",
     () => {
+      const fields = getCurrentMutationFields();
       return {
         content: [
           {
             type: "text",
-            text: Object.keys(mutationFields).join(", "),
+            text: fields ? Object.keys(fields).join(", ") : "No mutation fields available",
           },
         ],
       };
@@ -119,31 +151,35 @@ if (mutationFields) {
     "get-mutation-field",
     "Gets a single GraphQL mutation field definition in GraphQL Schema Definition Language.",
     { fieldName: z.string() },
-    ({ fieldName }) => ({
-      content: [
-        {
-          type: "text",
-          text: mutationFields[fieldName]?.astNode
-            ? print(mutationFields[fieldName].astNode)
-            : "Field not found or has no definition",
-        },
-      ],
-    }),
+    ({ fieldName }) => {
+      const fields = getCurrentMutationFields();
+      return {
+        content: [
+          {
+            type: "text",
+            text: fields?.[fieldName]?.astNode
+              ? print(fields[fieldName].astNode)
+              : "Field not found or has no definition",
+          },
+        ],
+      };
+    },
   );
 }
 
-const subscriptionFields = schema.getSubscriptionType()?.getFields();
+const subscriptionFields = getCurrentSubscriptionFields();
 
 if (subscriptionFields) {
   server.tool(
     "list-subscription-fields",
     "Lists all of the available root-level fields for a GraphQL subscription.",
     () => {
+      const fields = getCurrentSubscriptionFields();
       return {
         content: [
           {
             type: "text",
-            text: Object.keys(subscriptionFields).join(", "),
+            text: fields ? Object.keys(fields).join(", ") : "No subscription fields available",
           },
         ],
       };
@@ -154,16 +190,19 @@ if (subscriptionFields) {
     "get-subscription-field",
     "Gets a single GraphQL subscription field definition in GraphQL Schema Definition Language.",
     { fieldName: z.string() },
-    ({ fieldName }) => ({
-      content: [
-        {
-          type: "text",
-          text: subscriptionFields[fieldName]?.astNode
-            ? print(subscriptionFields[fieldName].astNode)
-            : "Field not found or has no definition",
-        },
-      ],
-    }),
+    ({ fieldName }) => {
+      const fields = getCurrentSubscriptionFields();
+      return {
+        content: [
+          {
+            type: "text",
+            text: fields?.[fieldName]?.astNode
+              ? print(fields[fieldName].astNode)
+              : "Field not found or has no definition",
+          },
+        ],
+      };
+    },
   );
 }
 
@@ -172,7 +211,7 @@ server.tool("list-types", "Lists all of the types defined in the GraphQL schema.
     {
       type: "text",
       // Filter out internal GraphQL types
-      text: Object.keys(schema.getTypeMap())
+      text: Object.keys(currentSchema.getTypeMap())
         .filter((type) => !type.startsWith("__"))
         .join(", "),
     },
@@ -185,7 +224,7 @@ server.tool(
   { typeName: z.string() },
   ({ typeName }) => {
     let text;
-    const type = schema.getTypeMap()[typeName];
+    const type = currentSchema.getTypeMap()[typeName];
     if (!type) {
       text = `Type "${typeName}" not found`;
     } else if (!type.astNode) {
@@ -205,7 +244,7 @@ server.tool(
   { typeName: z.string() },
   ({ typeName }) => {
     let text;
-    const type = schema.getTypeMap()?.[typeName];
+    const type = currentSchema.getTypeMap()?.[typeName];
     if (!type) {
       text = `Type "${typeName}" not found`;
     } else if (!("getFields" in type)) {
@@ -230,19 +269,19 @@ server.tool(
     const searchRegex = new RegExp(pattern, "i");
 
     // Search types
-    const matchingTypes = Object.keys(schema.getTypeMap()).filter(
+    const matchingTypes = Object.keys(currentSchema.getTypeMap()).filter(
       (type) => !type.startsWith("__") && searchRegex.test(type),
     );
     text += `Matching types: ${matchingTypes.join(", ") || "None"}`;
 
     // Search fields in object types
-    const matchingFields = Object.entries(schema.getTypeMap())
+    const matchingFields = Object.entries(currentSchema.getTypeMap())
       .filter(([typeName]) => !typeName.startsWith("__"))
       .flatMap(([typeName, type]) =>
         "getFields" in type
           ? Object.keys(type.getFields())
-              .filter((fieldName) => searchRegex.test(fieldName))
-              .map((fieldName) => `${typeName}.${fieldName}`)
+            .filter((fieldName) => searchRegex.test(fieldName))
+            .map((fieldName) => `${typeName}.${fieldName}`)
           : [],
       );
     text += `\nMatching fields: ${matchingFields.join(", ") || "None"}`;
@@ -250,6 +289,32 @@ server.tool(
     return { content: [{ type: "text", text }] };
   },
 );
+
+// Set up file watching for schema changes
+const watcher = chokidar.watch(currentSchemaPath, {
+  ignored: /(^|[\/\\])\../, // ignore dotfiles
+  persistent: true,
+  ignoreInitial: true, // don't fire events for the initial scan
+});
+
+watcher.on('change', async (path) => {
+  console.error(`Schema file changed: ${path}`);
+  try {
+    // Reload the schema
+    const newSchema = await loadSchema(currentSchemaPath);
+    currentSchema = newSchema;
+    console.error('Schema reloaded successfully');
+  } catch (error) {
+    console.error(`Failed to reload schema: ${error.message}`);
+    // Keep the existing schema if reload fails
+  }
+});
+
+watcher.on('error', error => {
+  console.error(`Watcher error: ${error}`);
+});
+
+console.error(`Watching for changes to schema file: ${currentSchemaPath}`);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
