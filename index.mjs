@@ -56,6 +56,21 @@ const loadSchema = async (schemaPath) => {
   }
 };
 
+const loadSchemaSilently = async (schemaPath) => {
+  let schemaContent;
+  try {
+    schemaContent = await readFile(schemaPath, { encoding: "utf-8" });
+  } catch (_error) {
+    throw new Error(`Schema file not found: ${schemaPath}`);
+  }
+  try {
+    const schema = buildSchema(schemaContent);
+    return schema;
+  } catch (error) {
+    throw error;
+  }
+};
+
 const initializeSchema = async () => {
   // Default to schema.graphqls if no argument provided
   currentSchemaPath = resolve(schemaArg ?? "schema.graphqls");
@@ -298,15 +313,14 @@ const watcher = chokidar.watch(currentSchemaPath, {
 });
 
 watcher.on('change', async (path) => {
-  console.error(`Schema file changed: ${path}`);
   try {
-    // Reload the schema
-    const newSchema = await loadSchema(currentSchemaPath);
+    // Silently reload the schema
+    const newSchema = await loadSchemaSilently(currentSchemaPath);
     currentSchema = newSchema;
-    console.error('Schema reloaded successfully');
+    // Only log success, no error logging to avoid disrupting MCP
   } catch (error) {
-    console.error(`Failed to reload schema: ${error.message}`);
-    // Keep the existing schema if reload fails
+    // Silently fail and keep the existing schema
+    // No error logging to avoid disrupting the MCP server connection
   }
 });
 
