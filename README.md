@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/hannesj-mcp-graphql-schema-badge.png)](https://mseep.ai/app/hannesj-mcp-graphql-schema)
+
 # GraphQL Schema Model Context Protocol Server
 
 [![smithery badge](https://smithery.ai/badge/@hannesj/mcp-graphql-schema)](https://smithery.ai/server/@hannesj/mcp-graphql-schema)
